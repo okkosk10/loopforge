@@ -466,6 +466,24 @@ input:disabled {
   line-height: 1.4;
 }
 
+.sprite-align-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sprite-align-toggle input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  accent-color: #0f766e;
+  cursor: pointer;
+}
+
 .sprite-controls {
   display: flex;
   align-items: flex-end;

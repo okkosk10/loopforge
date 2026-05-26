@@ -98,7 +98,65 @@ async function encodeGif(frames, options) {
   return new Blob([gif.bytesView()], { type: 'image/gif' })
 }
 
-async function sliceSpriteSheet(file, cols, rows) {
+function findForegroundBounds(imageData, alphaThreshold = 16) {
+  const { data, width, height } = imageData
+  let minX = width, minY = height, maxX = -1, maxY = -1
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3] > alphaThreshold) {
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+  }
+  return maxX >= 0 ? { minX, minY, maxX, maxY } : null
+}
+
+function makeAlignedCanvas(sourceCanvas, outputSize) {
+  const imageData = sourceCanvas
+    .getContext('2d')
+    .getImageData(0, 0, sourceCanvas.width, sourceCanvas.height)
+  const bounds = findForegroundBounds(imageData)
+
+  const out = document.createElement('canvas')
+  out.width = outputSize
+  out.height = outputSize
+  const ctx = out.getContext('2d')
+  ctx.imageSmoothingEnabled = false
+
+  let dx, dy
+  if (bounds) {
+    const bboxCenterX = (bounds.minX + bounds.maxX + 1) / 2
+    const bboxBottom = bounds.maxY + 1
+    dx = Math.round(outputSize / 2 - bboxCenterX)
+    dy = Math.round(outputSize * 0.85 - bboxBottom)
+  } else {
+    // No foreground found — center the cell
+    dx = Math.round((outputSize - sourceCanvas.width) / 2)
+    dy = Math.round((outputSize - sourceCanvas.height) / 2)
+  }
+  ctx.drawImage(sourceCanvas, dx, dy)
+  return out
+}
+
+function centerInSquare(sourceCanvas, outputSize) {
+  const out = document.createElement('canvas')
+  out.width = outputSize
+  out.height = outputSize
+  const ctx = out.getContext('2d')
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(
+    sourceCanvas,
+    Math.round((outputSize - sourceCanvas.width) / 2),
+    Math.round((outputSize - sourceCanvas.height) / 2),
+  )
+  return out
+}
+
+async function sliceSpriteSheet(file, cols, rows, options = {}) {
+  const { autoAlign = false } = options
   const tempUrl = URL.createObjectURL(file)
   const image = await loadImage(tempUrl)
   URL.revokeObjectURL(tempUrl)
@@ -106,13 +164,14 @@ async function sliceSpriteSheet(file, cols, rows) {
   // Output cell size: uniform across all frames
   const outputW = Math.round(image.naturalWidth / cols)
   const outputH = Math.round(image.naturalHeight / rows)
+  // Square output so all frames have a consistent size
+  const outputSize = Math.max(outputW, outputH)
 
-  const canvas = document.createElement('canvas')
-  canvas.width = outputW
-  canvas.height = outputH
-  const ctx = canvas.getContext('2d')
-  // Keep pixel-art sprites sharp
-  ctx.imageSmoothingEnabled = false
+  const cellCanvas = document.createElement('canvas')
+  cellCanvas.width = outputW
+  cellCanvas.height = outputH
+  const cellCtx = cellCanvas.getContext('2d', { willReadFrequently: true })
+  cellCtx.imageSmoothingEnabled = false
 
   const result = []
   let frameIndex = 0
@@ -127,10 +186,19 @@ async function sliceSpriteSheet(file, cols, rows) {
       const sw = sx2 - sx
       const sh = sy2 - sy
 
-      ctx.clearRect(0, 0, outputW, outputH)
-      ctx.drawImage(image, sx, sy, sw, sh, 0, 0, outputW, outputH)
+      cellCtx.clearRect(0, 0, outputW, outputH)
+      cellCtx.drawImage(image, sx, sy, sw, sh, 0, 0, outputW, outputH)
 
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+      let exportCanvas
+      try {
+        exportCanvas = autoAlign
+          ? makeAlignedCanvas(cellCanvas, outputSize)
+          : centerInSquare(cellCanvas, outputSize)
+      } catch {
+        exportCanvas = cellCanvas
+      }
+
+      const blob = await new Promise((resolve) => exportCanvas.toBlob(resolve, 'image/png'))
       if (!blob) continue // skip if canvas export fails
 
       const padded = String(frameIndex + 1).padStart(2, '0')
@@ -160,6 +228,7 @@ function App() {
   const [spriteRows, setSpriteRows] = useState(4)
   const [isSlicing, setIsSlicing] = useState(false)
   const [spritePreviewUrl, setSpritePreviewUrl] = useState(null)
+  const [autoAlign, setAutoAlign] = useState(true)
   const fileInputRef = useRef(null)
   const spriteInputRef = useRef(null)
   const framesRef = useRef([])
@@ -253,7 +322,7 @@ function App() {
     if (!spriteFile || isSlicing) return
     setIsSlicing(true)
     try {
-      const sliced = await sliceSpriteSheet(spriteFile, spriteCols, spriteRows)
+      const sliced = await sliceSpriteSheet(spriteFile, spriteCols, spriteRows, { autoAlign })
       setFrames((current) => [...current, ...sliced])
       setActiveIndex((index) => (frames.length === 0 ? 0 : index))
     } finally {
@@ -371,6 +440,19 @@ function App() {
               )}
             </button>
             <p className="sprite-hint">Non-divisible images are proportionally sliced.</p>
+            <label className="sprite-align-toggle">
+              <input
+                type="checkbox"
+                checked={autoAlign}
+                onChange={(event) => setAutoAlign(event.target.checked)}
+              />
+              <span>Auto align frames</span>
+            </label>
+            {autoAlign && (
+              <p className="sprite-hint">
+                Aligns visible pixels to a shared center and foot baseline.
+              </p>
+            )}
             <div className="sprite-controls">
               <label className="sprite-grid-label">
                 <span>Cols</span>
