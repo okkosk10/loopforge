@@ -8,10 +8,12 @@ import {
   Download,
   Film,
   Images,
+  Layers,
   Pause,
   Play,
   Plus,
   RotateCcw,
+  Scissors,
   Trash2,
 } from 'lucide-react'
 import { GIFEncoder, applyPalette, quantize } from 'gifenc'
@@ -96,6 +98,39 @@ async function encodeGif(frames, options) {
   return new Blob([gif.bytesView()], { type: 'image/gif' })
 }
 
+async function sliceSpriteSheet(file, cols, rows) {
+  const tempUrl = URL.createObjectURL(file)
+  const image = await loadImage(tempUrl)
+  URL.revokeObjectURL(tempUrl)
+
+  const cellW = Math.floor(image.naturalWidth / cols)
+  const cellH = Math.floor(image.naturalHeight / rows)
+  const canvas = document.createElement('canvas')
+  canvas.width = cellW
+  canvas.height = cellH
+  const ctx = canvas.getContext('2d')
+
+  const result = []
+  let frameIndex = 0
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      ctx.clearRect(0, 0, cellW, cellH)
+      ctx.drawImage(image, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH)
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+      const padded = String(frameIndex + 1).padStart(2, '0')
+      result.push({
+        id: `sprite-${file.name}-${row}-${col}-${crypto.randomUUID()}`,
+        name: `spritesheet-frame-${padded}`,
+        url: URL.createObjectURL(blob),
+        duration: DEFAULT_DURATION,
+        size: blob.size,
+      })
+      frameIndex++
+    }
+  }
+  return result
+}
+
 function App() {
   const [frames, setFrames] = useState([])
   const [activeIndex, setActiveIndex] = useState(0)
@@ -104,7 +139,13 @@ function App() {
   const [exportSize, setExportSize] = useState(DEFAULT_SIZE)
   const [background, setBackground] = useState('#f8fafc')
   const [isExporting, setIsExporting] = useState(false)
+  const [spriteFile, setSpriteFile] = useState(null)
+  const [spriteCols, setSpriteCols] = useState(4)
+  const [spriteRows, setSpriteRows] = useState(4)
+  const [isSlicing, setIsSlicing] = useState(false)
+  const [spritePreviewUrl, setSpritePreviewUrl] = useState(null)
   const fileInputRef = useRef(null)
+  const spriteInputRef = useRef(null)
   const framesRef = useRef([])
 
   const activeFrame = frames[activeIndex] ?? null
@@ -131,6 +172,12 @@ function App() {
       framesRef.current.forEach((frame) => URL.revokeObjectURL(frame.url))
     }
   }, [])
+
+  useEffect(() => {
+    return () => {
+      if (spritePreviewUrl) URL.revokeObjectURL(spritePreviewUrl)
+    }
+  }, [spritePreviewUrl])
 
   function addFiles(fileList) {
     const imageFiles = Array.from(fileList).filter((file) =>
@@ -178,6 +225,26 @@ function App() {
     setIsPlaying(false)
   }
 
+  function handleSpriteFileChange(event) {
+    const file = event.target.files?.[0]
+    if (!file || !file.type.startsWith('image/')) return
+    setSpriteFile(file)
+    setSpritePreviewUrl(URL.createObjectURL(file))
+    event.target.value = ''
+  }
+
+  async function sliceAndImport() {
+    if (!spriteFile || isSlicing) return
+    setIsSlicing(true)
+    try {
+      const sliced = await sliceSpriteSheet(spriteFile, spriteCols, spriteRows)
+      setFrames((current) => [...current, ...sliced])
+      setActiveIndex((index) => (frames.length === 0 ? 0 : index))
+    } finally {
+      setIsSlicing(false)
+    }
+  }
+
   async function exportGif() {
     if (frames.length === 0 || isExporting) return
     setIsExporting(true)
@@ -202,7 +269,7 @@ function App() {
           </div>
           <div>
             <h1>LoopForge</h1>
-            <p>Frame sequencer for lightweight looping stickers.</p>
+            <p>AI sprite sheet → looping GIF converter.</p>
           </div>
         </div>
         <div className="toolbar">
@@ -235,6 +302,13 @@ function App() {
         onChange={(event) => addFiles(event.target.files)}
         hidden
       />
+      <input
+        ref={spriteInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleSpriteFileChange}
+        hidden
+      />
 
       <section className="workspace">
         <aside className="sidebar" aria-label="Frame list">
@@ -256,6 +330,70 @@ function App() {
               <RotateCcw size={17} />
             </button>
           </div>
+
+          <div className="sprite-import">
+            <div className="sprite-import-header">
+              <Layers size={13} aria-hidden="true" />
+              <span>Sprite Sheet</span>
+            </div>
+            <button
+              className="drop-zone sprite-drop-zone"
+              type="button"
+              onClick={() => spriteInputRef.current?.click()}
+            >
+              {spritePreviewUrl ? (
+                <img
+                  src={spritePreviewUrl}
+                  alt="Sprite sheet preview"
+                  className="sprite-thumb"
+                />
+              ) : (
+                <>
+                  <Layers size={20} />
+                  <span>Select sprite sheet PNG</span>
+                </>
+              )}
+            </button>
+            <div className="sprite-controls">
+              <label className="sprite-grid-label">
+                <span>Cols</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="32"
+                  value={spriteCols}
+                  onChange={(event) =>
+                    setSpriteCols(Math.max(1, Number(event.target.value) || 1))
+                  }
+                />
+              </label>
+              <span className="sprite-grid-sep">×</span>
+              <label className="sprite-grid-label">
+                <span>Rows</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="32"
+                  value={spriteRows}
+                  onChange={(event) =>
+                    setSpriteRows(Math.max(1, Number(event.target.value) || 1))
+                  }
+                />
+              </label>
+              <span className="sprite-frame-count">= {spriteCols * spriteRows}</span>
+              <button
+                className="slice-button"
+                type="button"
+                onClick={sliceAndImport}
+                disabled={!spriteFile || isSlicing}
+              >
+                <Scissors size={14} />
+                {isSlicing ? 'Slicing…' : 'Slice'}
+              </button>
+            </div>
+          </div>
+
+          <div className="section-divider" />
 
           <button
             className="drop-zone"
