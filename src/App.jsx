@@ -103,20 +103,36 @@ async function sliceSpriteSheet(file, cols, rows) {
   const image = await loadImage(tempUrl)
   URL.revokeObjectURL(tempUrl)
 
-  const cellW = Math.floor(image.naturalWidth / cols)
-  const cellH = Math.floor(image.naturalHeight / rows)
+  // Output cell size: uniform across all frames
+  const outputW = Math.round(image.naturalWidth / cols)
+  const outputH = Math.round(image.naturalHeight / rows)
+
   const canvas = document.createElement('canvas')
-  canvas.width = cellW
-  canvas.height = cellH
+  canvas.width = outputW
+  canvas.height = outputH
   const ctx = canvas.getContext('2d')
+  // Keep pixel-art sprites sharp
+  ctx.imageSmoothingEnabled = false
 
   const result = []
   let frameIndex = 0
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      ctx.clearRect(0, 0, cellW, cellH)
-      ctx.drawImage(image, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH)
+      // Proportional crop: each boundary is rounded independently so
+      // rounding error never accumulates across columns/rows.
+      const sx = Math.round((col * image.naturalWidth) / cols)
+      const sy = Math.round((row * image.naturalHeight) / rows)
+      const sx2 = Math.round(((col + 1) * image.naturalWidth) / cols)
+      const sy2 = Math.round(((row + 1) * image.naturalHeight) / rows)
+      const sw = sx2 - sx
+      const sh = sy2 - sy
+
+      ctx.clearRect(0, 0, outputW, outputH)
+      ctx.drawImage(image, sx, sy, sw, sh, 0, 0, outputW, outputH)
+
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+      if (!blob) continue // skip if canvas export fails
+
       const padded = String(frameIndex + 1).padStart(2, '0')
       result.push({
         id: `sprite-${file.name}-${row}-${col}-${crypto.randomUUID()}`,
@@ -354,6 +370,7 @@ function App() {
                 </>
               )}
             </button>
+            <p className="sprite-hint">Non-divisible images are proportionally sliced.</p>
             <div className="sprite-controls">
               <label className="sprite-grid-label">
                 <span>Cols</span>
@@ -380,7 +397,9 @@ function App() {
                   }
                 />
               </label>
-              <span className="sprite-frame-count">= {spriteCols * spriteRows}</span>
+              <span className="sprite-frame-count" title="Non-divisible images are proportionally sliced">
+                = {spriteCols * spriteRows}
+              </span>
               <button
                 className="slice-button"
                 type="button"
