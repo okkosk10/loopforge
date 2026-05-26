@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
+  Bot,
+  ChevronDown,
+  ChevronUp,
   Download,
   Film,
   Images,
@@ -12,6 +15,8 @@ import {
   Trash2,
 } from 'lucide-react'
 import { GIFEncoder, applyPalette, quantize } from 'gifenc'
+import { generatedAssets } from './data/generatedAssets.js'
+import { qualityScore } from './data/loopAssetSchema.js'
 import './App.css'
 
 const DEFAULT_DURATION = 120
@@ -443,7 +448,96 @@ function App() {
           </button>
         </aside>
       </section>
+
+      <DatasetPreview />
     </main>
+  )
+}
+
+function DatasetPreview() {
+  const [expandedId, setExpandedId] = useState(null)
+
+  function toggle(id) {
+    setExpandedId((current) => (current === id ? null : id))
+  }
+
+  return (
+    <section className="dataset-panel" aria-label="Generated Dataset">
+      <div className="dataset-header">
+        <div className="dataset-header-left">
+          <Bot size={20} aria-hidden="true" />
+          <div>
+            <h2>Generated Dataset</h2>
+            <p>{generatedAssets.length} asset{generatedAssets.length !== 1 ? 's' : ''} · GPT-bot pipeline</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="asset-list">
+        {generatedAssets.map((asset) => {
+          const isExpanded = expandedId === asset.assetId
+          return (
+            <article key={asset.assetId} className="asset-card">
+              <button
+                className="asset-card-summary"
+                type="button"
+                onClick={() => toggle(asset.assetId)}
+                aria-expanded={isExpanded}
+              >
+                <div className="asset-card-meta">
+                  <strong>{asset.title}</strong>
+                  <div className="asset-tags">
+                    {asset.tags.slice(0, 4).map((tag) => (
+                      <span key={tag} className="tag">{tag}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="asset-card-stats">
+                  <span className="stat">{asset.frameCount} frames</span>
+                  <span className="stat loop-type">{asset.loopType}</span>
+                  <span className="stat">{asset.fps} fps</span>
+                  <span className="stat quality">QC {qualityScore(asset)}</span>
+                  {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </div>
+              </button>
+
+              {isExpanded && (
+                <div className="asset-card-detail">
+                  <p className="asset-description">{asset.characterDescription}</p>
+                  <div className="detail-row">
+                    <span className="detail-label">Style</span>
+                    <span>{asset.visualStyle}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Frame size</span>
+                    <span>{asset.frameSize.width} × {asset.frameSize.height}</span>
+                  </div>
+                  <div className="detail-row">
+                    <span className="detail-label">Palette</span>
+                    <div className="palette-swatches">
+                      {asset.colorPalette.map((color) => (
+                        <span
+                          key={color}
+                          className="swatch"
+                          style={{ background: color }}
+                          title={color}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="prompt-list-heading">Frame prompts</div>
+                  <ol className="prompt-list">
+                    {asset.framePrompts.map((fp) => (
+                      <li key={fp.frameIndex}>{fp.prompt}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </article>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
