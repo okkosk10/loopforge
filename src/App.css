@@ -619,7 +619,11 @@ input:disabled {
   }
 
   .sidebar {
-    max-height: 52svh;
+    max-height: none;
+  }
+
+  .frame-list {
+    flex: none;
   }
 
   .preview-frame {
