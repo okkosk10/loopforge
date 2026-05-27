@@ -125,8 +125,17 @@ function makeAlignedCanvas(sourceCanvas, outputSize) {
   if (bounds) {
     const bboxCenterX = (bounds.minX + bounds.maxX + 1) / 2
     const bboxBottom = bounds.maxY + 1
-    dx = Math.round(outputSize / 2 - bboxCenterX)
-    dy = Math.round(outputSize * 0.85 - bboxBottom)
+    const rawDx = Math.round(outputSize / 2 - bboxCenterX)
+    const rawDy = Math.round(outputSize * 0.85 - bboxBottom)
+    // Clamp so the foreground bbox never leaves the output canvas
+    const fgW = bounds.maxX - bounds.minX + 1
+    const fgH = bounds.maxY - bounds.minY + 1
+    const minDx = -bounds.minX
+    const maxDx = outputSize - fgW - bounds.minX
+    const minDy = -bounds.minY
+    const maxDy = outputSize - fgH - bounds.minY
+    dx = Math.max(minDx, Math.min(maxDx, rawDx))
+    dy = Math.max(minDy, Math.min(maxDy, rawDy))
   } else {
     // No foreground found — center the cell
     dx = Math.round((outputSize - sourceCanvas.width) / 2)
