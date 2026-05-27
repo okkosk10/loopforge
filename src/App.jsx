@@ -135,7 +135,7 @@ function makeAlignedCanvas(sourceCanvas, outputSize) {
     const minDy = -bounds.minY
     const maxDy = outputSize - fgH - bounds.minY
     dx = Math.max(minDx, Math.min(maxDx, rawDx))
-    dy = Math.max(minDy, Math.min(maxDy, rawDy))
+    dy = Math.max(0, Math.max(minDy, Math.min(maxDy, rawDy)))
   } else {
     // No foreground found — center the cell
     dx = Math.round((outputSize - sourceCanvas.width) / 2)
