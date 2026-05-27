@@ -1,5 +1,5 @@
 .app-shell {
-  min-height: 100svh;
+  height: 100svh;
   display: grid;
   grid-template-rows: auto 1fr auto;
   background:
@@ -202,8 +202,9 @@ input:disabled {
 }
 
 .frame-list {
+  flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -300,7 +301,8 @@ input:disabled {
 }
 
 .preview-frame {
-  min-height: 360px;
+  min-height: 0;
+  max-height: 100%;
   width: min(100%, 760px);
   aspect-ratio: 1;
   justify-self: center;
@@ -587,6 +589,11 @@ input:disabled {
 }
 
 @media (max-width: 760px) {
+  .app-shell {
+    height: auto;
+    min-height: 100svh;
+  }
+
   .topbar {
     align-items: flex-start;
     flex-direction: column;
