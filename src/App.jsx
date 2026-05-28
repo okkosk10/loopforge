@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
+  ChevronDown,
+  ChevronUp,
   Download,
   Film,
   Images,
@@ -18,6 +20,7 @@ import './App.css'
 
 const DEFAULT_DURATION = 120
 const DEFAULT_SIZE = 512
+const CELL_RATIO_WARNING_THRESHOLD = 0.08
 
 function createFrame(file, index) {
   return {
@@ -95,18 +98,68 @@ async function encodeGif(frames, options) {
 
 function findForegroundBounds(imageData, alphaThreshold = 16) {
   const { data, width, height } = imageData
-  let minX = width, minY = height, maxX = -1, maxY = -1
+  const visited = new Uint8Array(width * height)
+  const components = []
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      if (data[(y * width + x) * 4 + 3] > alphaThreshold) {
-        if (x < minX) minX = x
-        if (x > maxX) maxX = x
-        if (y < minY) minY = y
-        if (y > maxY) maxY = y
+      const start = y * width + x
+      if (visited[start] || data[start * 4 + 3] <= alphaThreshold) continue
+
+      let minX = x, minY = y, maxX = x, maxY = y, count = 0
+      const stack = [start]
+      visited[start] = 1
+
+      while (stack.length > 0) {
+        const index = stack.pop()
+        const px = index % width
+        const py = Math.floor(index / width)
+        count++
+        if (px < minX) minX = px
+        if (px > maxX) maxX = px
+        if (py < minY) minY = py
+        if (py > maxY) maxY = py
+
+        const neighbors = [index - 1, index + 1, index - width, index + width]
+        for (const next of neighbors) {
+          if (
+            next < 0 ||
+            next >= visited.length ||
+            visited[next] ||
+            (next === index - 1 && px === 0) ||
+            (next === index + 1 && px === width - 1) ||
+            data[next * 4 + 3] <= alphaThreshold
+          ) {
+            continue
+          }
+          visited[next] = 1
+          stack.push(next)
+        }
       }
+
+      components.push({ minX, minY, maxX, maxY, count })
     }
   }
-  return maxX >= 0 ? { minX, minY, maxX, maxY } : null
+
+  if (components.length === 0) return null
+
+  const largestCount = Math.max(...components.map((component) => component.count))
+  const minComponentSize = Math.max(8, largestCount * 0.03)
+  const selectedComponents = components.filter(
+    (component) => component.count >= minComponentSize,
+  )
+  const componentsForBounds =
+    selectedComponents.length > 0 ? selectedComponents : components
+
+  return componentsForBounds.reduce(
+    (bounds, component) => ({
+      minX: Math.min(bounds.minX, component.minX),
+      minY: Math.min(bounds.minY, component.minY),
+      maxX: Math.max(bounds.maxX, component.maxX),
+      maxY: Math.max(bounds.maxY, component.maxY),
+    }),
+    { minX: width, minY: height, maxX: -1, maxY: -1 },
+  )
 }
 
 function makeAlignedCanvas(sourceCanvas, outputSize) {
@@ -219,6 +272,48 @@ async function sliceSpriteSheet(file, cols, rows, options = {}) {
   return result
 }
 
+async function readImageDimensions(src) {
+  const image = await loadImage(src)
+  return {
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+  }
+}
+
+function getSpriteDiagnostics(spriteInfo, cols, rows) {
+  if (!spriteInfo) return null
+
+  const cellW = spriteInfo.width / cols
+  const cellH = spriteInfo.height / rows
+  const cellRatioDelta = Math.abs(cellW - cellH) / Math.max(cellW, cellH)
+  const hasAspectWarning = cellRatioDelta > CELL_RATIO_WARNING_THRESHOLD
+  const hasRemainderWarning =
+    spriteInfo.width % cols !== 0 || spriteInfo.height % rows !== 0
+  const suggestedRows = Math.max(1, Math.round(spriteInfo.height / cellW))
+  const suggestedCols = Math.max(1, Math.round(spriteInfo.width / cellH))
+  const messages = []
+
+  if (hasAspectWarning) {
+    messages.push(
+      `Selected grid makes ${Math.round(cellW)} x ${Math.round(cellH)} cells. If cells should be square, try ${cols} x ${suggestedRows} or ${suggestedCols} x ${rows}.`,
+    )
+  }
+
+  if (hasRemainderWarning) {
+    messages.push('Image size is not evenly divisible by this grid; slicing will use proportional crop boundaries.')
+  }
+
+  if (messages.length === 0) {
+    messages.push(`Grid looks even: ${Math.round(cellW)} x ${Math.round(cellH)} cells.`)
+  }
+
+  return {
+    hasWarning: hasAspectWarning || hasRemainderWarning,
+    imageLabel: `${spriteInfo.width} x ${spriteInfo.height}`,
+    messages,
+  }
+}
+
 function App() {
   const [frames, setFrames] = useState([])
   const [activeIndex, setActiveIndex] = useState(0)
@@ -232,7 +327,9 @@ function App() {
   const [spriteRows, setSpriteRows] = useState(4)
   const [isSlicing, setIsSlicing] = useState(false)
   const [spritePreviewUrl, setSpritePreviewUrl] = useState(null)
+  const [spriteInfo, setSpriteInfo] = useState(null)
   const [autoAlign, setAutoAlign] = useState(true)
+  const [isFrameListCollapsed, setIsFrameListCollapsed] = useState(false)
   const fileInputRef = useRef(null)
   const spriteInputRef = useRef(null)
   const framesRef = useRef([])
@@ -241,6 +338,10 @@ function App() {
   const totalDuration = useMemo(
     () => frames.reduce((sum, frame) => sum + frame.duration, 0),
     [frames],
+  )
+  const spriteDiagnostics = useMemo(
+    () => getSpriteDiagnostics(spriteInfo, spriteCols, spriteRows),
+    [spriteInfo, spriteCols, spriteRows],
   )
 
   useEffect(() => {
@@ -278,6 +379,7 @@ function App() {
       ...imageFiles.map((file, index) => createFrame(file, current.length + index)),
     ])
     setActiveIndex((index) => (frames.length === 0 ? 0 : index))
+    setIsFrameListCollapsed(false)
   }
 
   function updateFrame(id, updates) {
@@ -312,14 +414,23 @@ function App() {
     setFrames([])
     setActiveIndex(0)
     setIsPlaying(false)
+    setIsFrameListCollapsed(false)
   }
 
-  function handleSpriteFileChange(event) {
+  async function handleSpriteFileChange(event) {
     const file = event.target.files?.[0]
     if (!file || !file.type.startsWith('image/')) return
+    const previewUrl = URL.createObjectURL(file)
     setSpriteFile(file)
-    setSpritePreviewUrl(URL.createObjectURL(file))
+    setSpritePreviewUrl(previewUrl)
+    setSpriteInfo(null)
     event.target.value = ''
+
+    try {
+      setSpriteInfo(await readImageDimensions(previewUrl))
+    } catch {
+      setSpriteInfo(null)
+    }
   }
 
   async function sliceAndImport() {
@@ -329,6 +440,7 @@ function App() {
       const sliced = await sliceSpriteSheet(spriteFile, spriteCols, spriteRows, { autoAlign })
       setFrames((current) => [...current, ...sliced])
       setActiveIndex((index) => (frames.length === 0 ? 0 : index))
+      setIsFrameListCollapsed(false)
     } finally {
       setIsSlicing(false)
     }
@@ -408,16 +520,28 @@ function App() {
                 {frames.length} files / {totalDuration || 0} ms
               </p>
             </div>
-            <button
-              className="icon-button subtle"
-              type="button"
-              onClick={clearFrames}
-              disabled={frames.length === 0}
-              title="Clear frames"
-              aria-label="Clear frames"
-            >
-              <RotateCcw size={17} />
-            </button>
+            <div className="panel-actions">
+              <button
+                className="icon-button subtle mobile-only"
+                type="button"
+                onClick={() => setIsFrameListCollapsed((value) => !value)}
+                disabled={frames.length === 0}
+                title={isFrameListCollapsed ? 'Show frames' : 'Collapse frames'}
+                aria-label={isFrameListCollapsed ? 'Show frames' : 'Collapse frames'}
+              >
+                {isFrameListCollapsed ? <ChevronDown size={17} /> : <ChevronUp size={17} />}
+              </button>
+              <button
+                className="icon-button subtle"
+                type="button"
+                onClick={clearFrames}
+                disabled={frames.length === 0}
+                title="Clear frames"
+                aria-label="Clear frames"
+              >
+                <RotateCcw size={17} />
+              </button>
+            </div>
           </div>
 
           <div className="sprite-import">
@@ -444,6 +568,18 @@ function App() {
               )}
             </button>
             <p className="sprite-hint">Non-divisible images are proportionally sliced.</p>
+            {spriteDiagnostics && (
+              <div
+                className={`sprite-diagnostic ${
+                  spriteDiagnostics.hasWarning ? 'warning' : 'ok'
+                }`}
+              >
+                <strong>Image {spriteDiagnostics.imageLabel}</strong>
+                {spriteDiagnostics.messages.map((message) => (
+                  <p key={message}>{message}</p>
+                ))}
+              </div>
+            )}
             <label className="sprite-align-toggle">
               <input
                 type="checkbox"
@@ -514,7 +650,7 @@ function App() {
             <span>Drop images or click to import</span>
           </button>
 
-          <div className="frame-list">
+          <div className={`frame-list ${isFrameListCollapsed ? 'collapsed' : ''}`}>
             {frames.map((frame, index) => (
               <article
                 className={`frame-row ${index === activeIndex ? 'active' : ''}`}
