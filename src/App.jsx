@@ -162,11 +162,14 @@ function findForegroundBounds(imageData, alphaThreshold = 16) {
   )
 }
 
-function makeAlignedCanvas(sourceCanvas, outputSize) {
-  const imageData = sourceCanvas
-    .getContext('2d')
-    .getImageData(0, 0, sourceCanvas.width, sourceCanvas.height)
-  const bounds = findForegroundBounds(imageData)
+function makeAlignedCanvas(sourceCanvas, outputSize, foregroundBounds) {
+  let bounds = foregroundBounds
+  if (bounds === undefined) {
+    const imageData = sourceCanvas
+      .getContext('2d')
+      .getImageData(0, 0, sourceCanvas.width, sourceCanvas.height)
+    bounds = findForegroundBounds(imageData)
+  }
 
   const out = document.createElement('canvas')
   out.width = outputSize
@@ -180,7 +183,7 @@ function makeAlignedCanvas(sourceCanvas, outputSize) {
     const bboxBottom = bounds.maxY + 1
     const rawDx = Math.round(outputSize / 2 - bboxCenterX)
     const rawDy = Math.round(outputSize * 0.85 - bboxBottom)
-    // Clamp so the foreground bbox never leaves the output canvas
+    // Clamp so the foreground bbox never leaves the output canvas.
     const fgW = bounds.maxX - bounds.minX + 1
     const fgH = bounds.maxY - bounds.minY + 1
     const minDx = -bounds.minX
@@ -190,7 +193,7 @@ function makeAlignedCanvas(sourceCanvas, outputSize) {
     dx = Math.max(minDx, Math.min(maxDx, rawDx))
     dy = Math.max(0, Math.max(minDy, Math.min(maxDy, rawDy)))
   } else {
-    // No foreground found — center the cell
+    // No foreground found; center the cell.
     dx = Math.round((outputSize - sourceCanvas.width) / 2)
     dy = Math.round((outputSize - sourceCanvas.height) / 2)
   }
@@ -213,7 +216,7 @@ function centerInSquare(sourceCanvas, outputSize) {
 }
 
 async function sliceSpriteSheet(file, cols, rows, options = {}) {
-  const { autoAlign = false } = options
+  const { autoAlign = false, skipBlankFrames = true } = options
   const tempUrl = URL.createObjectURL(file)
   const image = await loadImage(tempUrl)
   URL.revokeObjectURL(tempUrl)
@@ -231,6 +234,7 @@ async function sliceSpriteSheet(file, cols, rows, options = {}) {
   cellCtx.imageSmoothingEnabled = false
 
   const result = []
+  let skippedBlankCount = 0
   let frameIndex = 0
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -246,10 +250,19 @@ async function sliceSpriteSheet(file, cols, rows, options = {}) {
       cellCtx.clearRect(0, 0, outputW, outputH)
       cellCtx.drawImage(image, sx, sy, sw, sh, 0, 0, outputW, outputH)
 
+      const foregroundBounds = findForegroundBounds(
+        cellCtx.getImageData(0, 0, outputW, outputH),
+      )
+      if (skipBlankFrames && !foregroundBounds) {
+        skippedBlankCount++
+        frameIndex++
+        continue
+      }
+
       let exportCanvas
       try {
         exportCanvas = autoAlign
-          ? makeAlignedCanvas(cellCanvas, outputSize)
+          ? makeAlignedCanvas(cellCanvas, outputSize, foregroundBounds)
           : centerInSquare(cellCanvas, outputSize)
       } catch {
         exportCanvas = cellCanvas
@@ -269,7 +282,7 @@ async function sliceSpriteSheet(file, cols, rows, options = {}) {
       frameIndex++
     }
   }
-  return result
+  return { frames: result, skippedBlankCount }
 }
 
 async function readImageDimensions(src) {
@@ -329,6 +342,8 @@ function App() {
   const [spritePreviewUrl, setSpritePreviewUrl] = useState(null)
   const [spriteInfo, setSpriteInfo] = useState(null)
   const [autoAlign, setAutoAlign] = useState(true)
+  const [skipBlankFrames, setSkipBlankFrames] = useState(true)
+  const [spriteImportStatus, setSpriteImportStatus] = useState('')
   const [isFrameListCollapsed, setIsFrameListCollapsed] = useState(false)
   const fileInputRef = useRef(null)
   const spriteInputRef = useRef(null)
@@ -424,6 +439,7 @@ function App() {
     setSpriteFile(file)
     setSpritePreviewUrl(previewUrl)
     setSpriteInfo(null)
+    setSpriteImportStatus('')
     event.target.value = ''
 
     try {
@@ -437,10 +453,20 @@ function App() {
     if (!spriteFile || isSlicing) return
     setIsSlicing(true)
     try {
-      const sliced = await sliceSpriteSheet(spriteFile, spriteCols, spriteRows, { autoAlign })
+      const { frames: sliced, skippedBlankCount } = await sliceSpriteSheet(
+        spriteFile,
+        spriteCols,
+        spriteRows,
+        { autoAlign, skipBlankFrames },
+      )
       setFrames((current) => [...current, ...sliced])
       setActiveIndex((index) => (frames.length === 0 ? 0 : index))
       setIsFrameListCollapsed(false)
+      setSpriteImportStatus(
+        skippedBlankCount > 0
+          ? `Imported ${sliced.length} frames; skipped ${skippedBlankCount} empty cells.`
+          : `Imported ${sliced.length} frames.`,
+      )
     } finally {
       setIsSlicing(false)
     }
@@ -470,7 +496,7 @@ function App() {
           </div>
           <div>
             <h1>LoopForge</h1>
-            <p>AI sprite sheet → looping GIF converter.</p>
+            <p>AI sprite sheet to looping GIF converter.</p>
           </div>
         </div>
         <div className="toolbar">
@@ -593,6 +619,14 @@ function App() {
                 Aligns visible pixels to a shared center and foot baseline.
               </p>
             )}
+            <label className="sprite-align-toggle">
+              <input
+                type="checkbox"
+                checked={skipBlankFrames}
+                onChange={(event) => setSkipBlankFrames(event.target.checked)}
+              />
+              <span>Skip empty transparent cells</span>
+            </label>
             <div className="sprite-controls">
               <label className="sprite-grid-label">
                 <span>Cols</span>
@@ -606,7 +640,7 @@ function App() {
                   }
                 />
               </label>
-              <span className="sprite-grid-sep">×</span>
+              <span className="sprite-grid-sep">x</span>
               <label className="sprite-grid-label">
                 <span>Rows</span>
                 <input
@@ -629,9 +663,12 @@ function App() {
                 disabled={!spriteFile || isSlicing}
               >
                 <Scissors size={14} />
-                {isSlicing ? 'Slicing…' : 'Slice'}
+                {isSlicing ? 'Slicing...' : 'Slice'}
               </button>
             </div>
+            {spriteImportStatus && (
+              <p className="sprite-status">{spriteImportStatus}</p>
+            )}
           </div>
 
           <div className="section-divider" />

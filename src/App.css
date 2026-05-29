@@ -446,7 +446,7 @@ input:disabled {
   width: 100%;
 }
 
-/* ── Sprite Sheet Import ──────────────────────────────────── */
+/* Sprite Sheet Import */
 
 .sprite-import {
   display: flex;
@@ -482,6 +482,17 @@ input:disabled {
   font-size: 11px;
   color: #94a3b8;
   line-height: 1.4;
+}
+
+.sprite-status {
+  margin: 0;
+  border-radius: 7px;
+  background: #eef6ff;
+  padding: 7px 8px;
+  color: #175cd3;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
 .sprite-diagnostic {
@@ -677,6 +688,18 @@ input:disabled {
 
   .frame-list.collapsed {
     display: none;
+  }
+
+  .sprite-controls {
+    display: grid;
+    grid-template-columns: 48px auto 48px auto minmax(0, 1fr);
+    align-items: end;
+  }
+
+  .slice-button {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-left: 0;
   }
 
   .mobile-only {
